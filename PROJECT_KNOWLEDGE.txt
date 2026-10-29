@@ -1,0 +1,590 @@
+PLANT DISEASE DETECTION - PROJECT KNOWLEDGE BASE
+=================================================
+
+Last updated: 2026-10-29
+Repository: https://github.com/kvlokeshkumar/Plant_Disease_Detection (private)
+
+This file describes the project in enough detail to understand, rebuild,
+retrain and run it from scratch. Everything below was taken from the code,
+notebooks, saved outputs and data in the repository. Where something could
+not be confirmed from those sources it is listed under "Open questions"
+(section 12) instead of being assumed.
+
+
+-------------------------------------------------------------------------
+1. PROJECT OVERVIEW
+-------------------------------------------------------------------------
+
+Purpose
+  Identify plant diseases from a photo of a single leaf. The user uploads a
+  leaf image and the system predicts one of 38 crop/disease classes (14 crop
+  species, including a "healthy" class for most of them), estimates how much
+  of the leaf is affected, and shows disease information, treatment steps
+  and a simple pathogen spread preview.
+
+Problem solved
+  Early, cheap screening of common crop leaf diseases without needing an
+  expert on site. The output gives a likely diagnosis plus practical
+  guidance (symptoms, prevention, severity-based treatment).
+
+Target users
+  Farmers, gardeners, agriculture students and extension workers who want a
+  quick first opinion on a leaf disease.
+
+Current status
+  Working prototype.
+  - CNN trained and saved (trained_plant_disease_model.keras).
+  - Validation accuracy about 97% on 17,572 validation images
+    (see section 6, "Metrics and results").
+  - Streamlit web app (main.py) runs locally with 4 pages: Home, About
+    (model metrics), Disease Recognition, Prediction History.
+  - Login / Sign Up buttons on the Home page are placeholders only.
+  - The pathogen spread preview is a rule-based prototype, not a trained
+    model.
+  - Not deployed anywhere; runs on a local machine.
+
+
+-------------------------------------------------------------------------
+2. TECH STACK
+-------------------------------------------------------------------------
+
+Language
+  Python 3.10 (the Jupyter kernel used for training is named "tf" and
+  reports Python 3.10.19).
+
+Libraries (from Plant_Disease_Dataset/requirement.txt)
+  tensorflow     2.10.0   CNN training and inference (tf.keras).
+                          The saved model file records keras_version 2.10.0.
+  scikit-learn   1.3.0    classification_report, confusion_matrix
+  numpy          1.24.3   arrays
+  matplotlib     3.7.2    plots in notebooks
+  seaborn        0.13.0   confusion matrix heatmap / bar plots in notebook
+  pandas         2.1.0    tables for Plotly charts in the app
+  streamlit      (unpinned) web app
+  librosa        0.10.1   listed but NOT used anywhere in the code
+  plotly         5.18.0   charts in the app
+  Pillow         >=9.0.0  image loading in the app
+
+Used in code but missing from requirement.txt
+  opencv-python  (import cv2)  only in Test_plant_disease.ipynb and
+                               Untitled-1.py, to display the test image.
+
+Tools
+  Jupyter Notebook / VS Code (VS Code settings point to conda as the
+  environment and package manager).
+  Git + Git LFS for this repository.
+
+Hardware used for training (from notebook output)
+  NVIDIA GeForce RTX 3050 Laptop GPU, 6 GB VRAM, driver 591.74.
+  One epoch over the training set took roughly 1 minute on this GPU
+  (evaluation pass: 2197 steps in 68 s).
+
+OS
+  Windows (paths in notebooks use backslashes, e.g. 'test\\test\\...').
+  TensorFlow 2.10 is the last release with native Windows GPU support,
+  which is why it is pinned (see section 11).
+
+Services / APIs
+  None. No external APIs, databases or cloud services are used.
+
+
+-------------------------------------------------------------------------
+3. FOLDER STRUCTURE
+-------------------------------------------------------------------------
+
+Plant_Disease_Detection/                 repository root
+|-- README.md                            short intro, points to this file
+|-- PROJECT_KNOWLEDGE.txt                this document
+|-- DATA_README.md                       where the dataset lives and how to download it
+|-- .gitignore                           excludes dataset, caches, IDE and local files
+|-- .gitattributes                       stores *.keras files with Git LFS
+`-- Plant_Disease_Dataset/               project working folder (all code runs from here)
+    |-- main.py                          Streamlit web app (entry point)
+    |-- disease_info.py                  disease database (38 classes) + severity analysis
+    |-- generate_metrics.py              rebuilds model_metrics.json from the validation set
+    |-- training_model.ipynb             builds, trains, evaluates and saves the CNN
+    |-- Test_plant_disease.ipynb         loads the saved model and predicts one test image
+    |-- Untitled-1.py                    script export of Test_plant_disease.ipynb (same steps)
+    |-- requirement.txt                  Python dependencies
+    |-- trained_plant_disease_model.keras  trained CNN (94 MB, HDF5 format, Git LFS)
+    |-- training_hist.json               per-epoch loss/accuracy (read by the About page)
+    |-- model_metrics.json               per-class precision/recall/F1 + confusion matrix
+    |-- home_page.jpg                    image asset (not referenced by current code)
+    |-- test/test/                       33 sample leaf images for manual testing (in Git)
+    |-- train/<38 class folders>/        70,295 training images (NOT in Git, see DATA_README.md)
+    `-- valid/<38 class folders>/        17,572 validation images (NOT in Git)
+
+Local-only folders that are not part of the repository
+  data set/Plant_Disease_Dataset.zip     1.4 GB zip of the train/valid/test images
+  __MACOSX/                              macOS metadata left over from unzipping
+  .vscode/                               editor settings
+
+
+-------------------------------------------------------------------------
+4. ARCHITECTURE AND END-TO-END WORKFLOW
+-------------------------------------------------------------------------
+
+A. Training pipeline (training_model.ipynb)
+
+  train/ and valid/ folders (one sub-folder per class)
+     -> tf.keras.utils.image_dataset_from_directory
+        (labels inferred from folder names, one-hot labels,
+         RGB, resized to 128x128, batch size 32, shuffled)
+     -> Sequential CNN (section 6)
+     -> cnn.fit(training_set, validation_data=validation_set, epochs=10)
+     -> cnn.save('trained_plant_disease_model.keras')
+     -> training_history.history saved to training_hist.json
+     -> evaluation: classification report + confusion matrix
+
+  generate_metrics.py repeats the evaluation on valid/ (unshuffled) and
+  writes model_metrics.json.
+
+B. Inference pipeline (main.py, "Disease Recognition" page)
+
+  1. User uploads a JPG/PNG leaf image.
+  2. Image opened with Pillow, converted to RGB, resized to 128x128,
+     turned into a float array with shape (1, 128, 128, 3).
+     Pixel values are kept in 0..255 (no rescaling), same as training.
+  3. load_model() loads trained_plant_disease_model.keras once and caches
+     it (st.cache_resource).
+  4. model.predict returns 38 softmax probabilities.
+  5. get_top_predictions picks the top 5 and maps indices to names using
+     the hard-coded CLASS_NAMES list (alphabetical folder order, must match
+     the training class order).
+  6. If the top class is not "healthy", analyze_severity (disease_info.py)
+     estimates the percentage of diseased leaf area from colour.
+  7. The result is stored in st.session_state (latest prediction and a
+     per-session history list).
+  8. UI shows: top prediction and confidence, top-5 bar chart, and tabs for
+     Description, Symptoms/Prevention, Severity, Treatments, Pathogen.
+  9. Pathogen tab: user sets humidity, temperature, wind speed/direction,
+     rainfall and number of nearby infected plants; a rule-based scorer
+     (generate_pathogen_prediction) returns spread pressure, likely
+     direction and notes, drawn as a radar chart and a 5x5 hotspot heatmap.
+
+C. Other pages
+
+  Home                 static description of the platform; Login/Sign Up
+                       buttons only show an info message.
+  About                reads training_hist.json and draws accuracy/loss
+                       curves and summary metrics; checks that
+                       model_metrics.json exists.
+  Prediction History   lists predictions from the current browser session
+                       and a pie chart of predicted classes. History is
+                       held in memory only and is lost when the session
+                       ends.
+
+
+-------------------------------------------------------------------------
+5. DATASET
+-------------------------------------------------------------------------
+
+Source
+  Kaggle, "New Plant Diseases Dataset" by vipoooool:
+  https://www.kaggle.com/datasets/vipoooool/new-plant-diseases-dataset
+  (link taken from training_model.ipynb). It is an augmented version of
+  the public PlantVillage leaf image dataset. File names contain suffixes
+  such as _90deg, _270deg and _new30degFlipLR, which show that rotated and
+  flipped copies of original images are included.
+
+How it was obtained
+  Downloaded from Kaggle as a zip, kept locally as
+  "data set/Plant_Disease_Dataset.zip" (1,487,392,828 bytes) and extracted
+  into Plant_Disease_Dataset/.
+
+Format
+  JPG images, RGB, 256x256 pixels (checked on a sample), organised as one
+  folder per class. There is no CSV or tabular schema: the label is the
+  folder name.
+
+Label format
+  "<Crop>___<Condition>", for example "Tomato___Late_blight" or
+  "Apple___healthy". Three underscores separate crop and condition.
+  The model's class index is the alphabetical order of these folder names
+  (as produced by image_dataset_from_directory).
+
+Size and splits (counted on disk)
+  train   70,295 images  ~1.3 GB
+  valid   17,572 images  ~316 MB  (used as the validation AND evaluation set)
+  test        33 images  ~560 KB  (unlabelled samples in one flat folder;
+                                   class is only in the file name)
+  Classes are roughly balanced: 1,642 to 2,022 training images and
+  410 to 505 validation images per class (about an 80/20 split per class).
+
+The 38 classes (train / valid counts)
+  Apple___Apple_scab                                  2016 / 504
+  Apple___Black_rot                                   1987 / 497
+  Apple___Cedar_apple_rust                            1760 / 440
+  Apple___healthy                                     2008 / 502
+  Blueberry___healthy                                 1816 / 454
+  Cherry_(including_sour)___Powdery_mildew            1683 / 421
+  Cherry_(including_sour)___healthy                   1826 / 456
+  Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot  1642 / 410
+  Corn_(maize)___Common_rust_                         1907 / 477
+  Corn_(maize)___Northern_Leaf_Blight                 1908 / 477
+  Corn_(maize)___healthy                              1859 / 465
+  Grape___Black_rot                                   1888 / 472
+  Grape___Esca_(Black_Measles)                        1920 / 480
+  Grape___Leaf_blight_(Isariopsis_Leaf_Spot)          1722 / 430
+  Grape___healthy                                     1692 / 423
+  Orange___Haunglongbing_(Citrus_greening)            2010 / 503
+  Peach___Bacterial_spot                              1838 / 459
+  Peach___healthy                                     1728 / 432
+  Pepper,_bell___Bacterial_spot                       1913 / 478
+  Pepper,_bell___healthy                              1988 / 497
+  Potato___Early_blight                               1939 / 485
+  Potato___Late_blight                                1939 / 485
+  Potato___healthy                                    1824 / 456
+  Raspberry___healthy                                 1781 / 445
+  Soybean___healthy                                   2022 / 505
+  Squash___Powdery_mildew                             1736 / 434
+  Strawberry___Leaf_scorch                            1774 / 444
+  Strawberry___healthy                                1824 / 456
+  Tomato___Bacterial_spot                             1702 / 425
+  Tomato___Early_blight                               1920 / 480
+  Tomato___Late_blight                                1851 / 463
+  Tomato___Leaf_Mold                                  1882 / 470
+  Tomato___Septoria_leaf_spot                         1745 / 436
+  Tomato___Spider_mites Two-spotted_spider_mite       1741 / 435
+  Tomato___Target_Spot                                1827 / 457
+  Tomato___Tomato_Yellow_Leaf_Curl_Virus              1961 / 490
+  Tomato___Tomato_mosaic_virus                        1790 / 448
+  Tomato___healthy                                    1926 / 481
+
+Preprocessing and cleaning
+  - Resize to 128x128 with bilinear interpolation (done by
+    image_dataset_from_directory, no cropping).
+  - No pixel normalisation: the model is trained on raw 0..255 values, so
+    inference must also feed raw 0..255 values.
+  - No extra augmentation in code; the dataset itself is pre-augmented.
+  - No cleaning step. .DS_Store files from macOS exist in the folders and
+    are ignored by the loader.
+
+Known issues
+  - Augmented copies of the same original leaf can appear in both train
+    and valid, so validation accuracy is likely optimistic compared with
+    truly new field photos.
+  - Images are lab-style photos (single leaf, plain background). Real field
+    photos with clutter, several leaves or different lighting may score
+    worse.
+  - Some class names contain spaces, commas and parentheses, which matters
+    for scripts and shells.
+  - "Haunglongbing" is spelled this way in the dataset (correct spelling is
+    Huanglongbing). The app shows the correct spelling.
+
+Where the data lives now
+  - train/ and valid/: NOT in Git (too large). Re-download from Kaggle.
+  - test/test/ (33 images): in Git.
+  - Original zip: local only. See DATA_README.md for exact steps and the
+    expected folder layout.
+
+
+-------------------------------------------------------------------------
+6. IMPLEMENTATION DETAILS
+-------------------------------------------------------------------------
+
+6.1 training_model.ipynb  (training)
+
+  Loads data
+    training_set   = image_dataset_from_directory('train', label_mode='categorical',
+                     image_size=(128,128), batch_size=32, shuffle=True)
+    validation_set = same for 'valid'
+
+  Model (tf.keras.Sequential), input 128x128x3
+    Block 1  Conv2D(32, 3, padding='same', relu)  -> Conv2D(32, 3, relu)  -> MaxPool2D(2, 2)
+    Block 2  Conv2D(64, 3, padding='same', relu)  -> Conv2D(64, 3, relu)  -> MaxPool2D(2, 2)
+    Block 3  Conv2D(128, 3, padding='same', relu) -> Conv2D(128, 3, relu) -> MaxPool2D(2, 2)
+    Block 4  Conv2D(256, 3, padding='same', relu) -> Conv2D(256, 3, relu) -> MaxPool2D(2, 2)
+    Block 5  Conv2D(512, 3, padding='same', relu) -> Conv2D(512, 3, relu) -> MaxPool2D(2, 2)
+    Dropout(0.25)
+    Flatten                      (2 x 2 x 512 = 2048 features)
+    Dense(1500, relu)
+    Dropout(0.4)
+    Dense(38, softmax)
+  Trainable parameters: about 7.84 million (calculated from the layer
+  sizes). The 94 MB file size is larger because the optimizer state is
+  saved too.
+
+  Training settings
+    optimizer      tf.keras.optimizers.legacy.Adam(learning_rate=0.0001)
+    loss           categorical_crossentropy
+    metrics        accuracy
+    epochs         10
+    batch size     32
+    callbacks      none (no early stopping, no checkpoints)
+    random seed    not set (results are not exactly reproducible)
+
+  Evaluation
+    cnn.evaluate on train and valid, classification_report and
+    confusion_matrix from scikit-learn on valid (batch size 1, unshuffled),
+    plus plots: accuracy curves, confusion matrix heatmap, validation class
+    distribution, sample images, single-image probability bar chart, top-5
+    chart, per-class accuracy, confidence histogram.
+
+  Outputs
+    trained_plant_disease_model.keras, training_hist.json
+
+6.2 generate_metrics.py
+
+  Loads the saved model and valid/ (shuffle=False, batch 32), predicts every
+  image, then writes model_metrics.json with:
+    class_names            list of 38 names
+    classification_report  per-class precision, recall, f1-score, support,
+                           plus accuracy, macro avg, weighted avg
+    confusion_matrix       38x38 list of counts (rows = true, cols = predicted)
+
+6.3 main.py  (Streamlit app)
+
+  Key functions
+    load_model()                cached tf.keras.models.load_model
+    model_prediction(file)      preprocess to (1,128,128,3) and predict
+    get_top_predictions(p, k)   top-k classes with readable names and %
+    infer_pathogen_profile(c)   keyword rules on the class name:
+                                "bacterial" -> Bacterial, "virus"/"greening" -> Viral,
+                                "mite" -> Mite-linked, everything else -> Fungal
+    generate_pathogen_prediction(...)
+                                adds "pressure points" from severity (>=20/45%),
+                                humidity (>=55/75), wind (>=8/18 km/h),
+                                rainfall (Moderate/Heavy), nearby infected plants (>=2/4);
+                                >=7 High, >=4 Medium, else Low;
+                                also returns per-factor 0..100 scores for the radar chart
+    build_factor_radar(scores)  Plotly polar chart
+    build_hotspot_grid(dir, hours, score)
+                                5x5 heatmap around the source plant, higher
+                                values in the downwind direction, scaled by time
+    show_model_metrics()        reads training_hist.json and plots curves
+
+  CLASS_NAMES is hard-coded in alphabetical folder order and must stay in
+  sync with the training class order.
+
+  Session state keys: prediction_history, latest_prediction,
+  latest_pathogen_prediction, plus widget keys (pathogen_*).
+
+6.4 disease_info.py
+
+  DISEASE_INFO   dict keyed by class name with plant, disease, description,
+                 symptoms, treatment, prevention (all 38 classes).
+  get_disease_info(class_name), get_disease_name(class_name)
+  SEVERITY_LEVELS  Mild 0-15%, Moderate 15-35%, Severe 35-60%,
+                   Critical 60-100% of leaf area, each with colour,
+                   urgency, description, action and treatment steps.
+  analyze_severity(image)
+    1. Resize to 256x256 RGB.
+    2. Convert to HSV with NumPy (no OpenCV).
+    3. Leaf mask: 0.15 < V < 0.95 and S > 0.08.
+    4. Healthy mask: leaf pixels with hue 55..170 degrees, S > 0.15, V > 0.2.
+    5. Affected % = (1 - healthy / leaf) x 100, capped at 95%
+       (5% if no leaf pixels are found).
+    6. Map % to a severity level.
+  This is a colour heuristic, not a trained segmentation model.
+
+6.5 Test_plant_disease.ipynb and Untitled-1.py
+
+  Load the model, load valid/ only to get class names, read
+  test/test/AppleCedarRust1.JPG, predict, show the image with the
+  predicted name. Saved output: class index 2 (Apple___Cedar_apple_rust),
+  which is correct. Untitled-1.py is the same code exported as a script.
+
+6.6 Metrics and results
+
+  From model_metrics.json (current saved model, 17,572 validation images)
+    accuracy            96.96%
+    macro precision     96.99%
+    macro recall        96.95%
+    macro F1            96.95%
+    lowest F1 classes   Tomato Septoria leaf spot 0.915, Tomato Early blight 0.917,
+                        Tomato Late blight 0.918, Corn Cercospora/Gray leaf spot 0.930,
+                        Tomato Target spot 0.938
+
+  From training_hist.json (10 epochs)
+    epoch 1   train acc 59.9%   val acc 79.9%
+    epoch 10  train acc 98.2%   val acc 97.0%   val loss 0.107
+
+  The notebook's saved cell outputs come from a different training run
+  (final val acc 95.8%, train-set evaluation 98.9%). See Open questions.
+
+
+-------------------------------------------------------------------------
+7. CONFIGURATION AND ENVIRONMENT
+-------------------------------------------------------------------------
+
+Environment variables   none used.
+Secrets / API keys      none used; no .env file exists.
+Config files            none. Paths are relative and hard-coded:
+                          trained_plant_disease_model.keras, training_hist.json,
+                          model_metrics.json, train/, valid/, test/test/
+                        All scripts must be run from inside the
+                        Plant_Disease_Dataset/ folder.
+Databases               none. Prediction history is in Streamlit session memory.
+External integrations   none.
+Editor                  .vscode/settings.json (local only) sets conda as the
+                        Python environment and package manager.
+
+
+-------------------------------------------------------------------------
+8. SETUP AND RUN GUIDE (FRESH CLONE)
+-------------------------------------------------------------------------
+
+Prerequisites
+  - Git and Git LFS (https://git-lfs.com)
+  - Python 3.10 (TensorFlow 2.10 does not support Python 3.11+)
+  - Optional for GPU training on Windows: CUDA 11.2 and cuDNN 8.1,
+    which are the versions TensorFlow 2.10 was built against
+
+1. Clone (the model file comes through Git LFS)
+     git lfs install
+     git clone https://github.com/kvlokeshkumar/Plant_Disease_Detection.git
+     cd Plant_Disease_Detection
+     git lfs pull
+
+2. Create an environment and install dependencies
+   With conda (matches the original setup):
+     conda create -n tf python=3.10 -y
+     conda activate tf
+     pip install -r Plant_Disease_Dataset/requirement.txt
+     pip install opencv-python          (only needed for the test notebook)
+   With venv:
+     py -3.10 -m venv .venv
+     .venv\Scripts\activate
+     pip install -r Plant_Disease_Dataset/requirement.txt
+
+3. Run the app (no dataset needed, only the model file)
+     cd Plant_Disease_Dataset
+     streamlit run main.py
+   Open http://localhost:8501, choose "Disease Recognition" in the sidebar,
+   upload an image from test/test/ and press "Predict Disease".
+
+4. Get the dataset (only for retraining or regenerating metrics)
+   Follow DATA_README.md so that Plant_Disease_Dataset/train/ and
+   Plant_Disease_Dataset/valid/ exist with 38 class folders each.
+
+5. Retrain
+     cd Plant_Disease_Dataset
+     jupyter notebook training_model.ipynb
+   Run all cells. This overwrites trained_plant_disease_model.keras and
+   training_hist.json. About 10-15 minutes on an RTX 3050.
+
+6. Regenerate metrics
+     cd Plant_Disease_Dataset
+     python generate_metrics.py
+   Writes model_metrics.json.
+
+7. Quick single-image test
+     cd Plant_Disease_Dataset
+     python Untitled-1.py       (needs valid/ for class names, and opencv-python)
+
+Tests
+  There is no automated test suite.
+
+
+-------------------------------------------------------------------------
+9. DEPLOYMENT AND USAGE
+-------------------------------------------------------------------------
+
+How it is run
+  Locally with "streamlit run main.py". There is no deployment config
+  (no Dockerfile, no cloud config, no CI).
+
+Example input
+  test/test/AppleCedarRust1.JPG (a leaf with orange rust spots)
+
+Example output
+  - Prediction: "Apple - Cedar Apple Rust" with a confidence percentage
+    (the test notebook shows class index 2 for this image).
+  - Top-5 confidence bar chart.
+  - Severity: one of Mild / Moderate / Severe / Critical with the affected
+    leaf area %, urgency and an action line.
+  - Treatment steps for that severity level.
+  - Pathogen tab (diseased only): e.g. profile "Fungal", spread pressure
+    Low/Medium/High, likely movement "downwind toward E", radar chart and
+    hotspot grid.
+  - Healthy prediction: green success message and no severity or pathogen
+    output.
+
+Possible deployment route (not done)
+  Streamlit Community Cloud or any VM with Python 3.10. The model file must
+  be fetched with Git LFS. TensorFlow CPU is enough for inference.
+
+
+-------------------------------------------------------------------------
+10. KNOWN BUGS, LIMITATIONS, TODOs, FUTURE IDEAS
+-------------------------------------------------------------------------
+
+Bugs / rough edges
+  - requirement.txt leaves streamlit unpinned. main.py uses
+    st.image(..., use_column_width=True), which is deprecated in newer
+    Streamlit releases. Pin a version that matches when installing.
+  - requirement.txt lists librosa (unused) and omits opencv-python (used
+    in the test notebook and Untitled-1.py).
+  - numpy 1.24.3 is newer than what TensorFlow 2.10 officially lists; it
+    worked on the original machine but could cause warnings elsewhere.
+  - The model file has a .keras extension but is stored in HDF5 format
+    (that is what TensorFlow 2.10 writes). Newer TensorFlow/Keras 3 may
+    need the file renamed to .h5 or re-saved.
+  - Hotspot grid: the "Spread Time Selector" slider is drawn after the
+    chart, so the chart shows the previous slider value until the next
+    rerun.
+  - Late blight (caused by an oomycete) is labelled "Fungal" by the
+    keyword rules in infer_pathogen_profile.
+  - Untitled-1.py and Test_plant_disease.ipynb import ImageDataGenerator
+    from keras.preprocessing.image but never use it.
+  - CLASS_NAMES is duplicated in main.py rather than saved with the model.
+
+Limitations
+  - Only the 38 classes above; any other plant or disease will be forced
+    into one of them. There is no "unknown / not a leaf" class.
+  - Trained on lab-style images; field accuracy is unknown.
+  - Severity is a colour heuristic and can be fooled by brown or yellow
+    backgrounds, shadows or naturally non-green leaves.
+  - Pathogen spread preview is rule-based and illustrative only.
+  - No authentication; Login/Sign Up are placeholders.
+  - Prediction history is not saved after the session ends.
+  - No automated tests.
+
+Future ideas (from placeholders in the code)
+  - Real login and sign-up flow.
+  - Persistent prediction history.
+  - Possible: transfer learning (e.g. MobileNet/EfficientNet), an
+    "unknown" class, field-photo evaluation set, deployment.
+
+
+-------------------------------------------------------------------------
+11. DECISIONS AND GOTCHAS
+-------------------------------------------------------------------------
+
+  - TensorFlow 2.10 is pinned because it is the last version with native
+    GPU support on Windows. Newer versions need WSL2 for GPU.
+  - Image size 128x128 (down from the dataset's 256x256) keeps training
+    fast on a 6 GB laptop GPU.
+  - No normalisation layer: training and the app both feed raw 0..255
+    pixels. If you add Rescaling(1/255) to training, the app must change
+    too, or predictions will be wrong.
+  - Class order = alphabetical folder order. Renaming or adding a class
+    folder changes every index; update CLASS_NAMES in main.py and
+    DISEASE_INFO keys in disease_info.py.
+  - Low learning rate (0.0001) and two Dropout layers were chosen to limit
+    overfitting (comment in the notebook: "To avoid overfitting").
+  - The validation set doubles as the test set for reported metrics; the
+    33-image test folder is unlabelled except for file names.
+  - All paths are relative: run every script from Plant_Disease_Dataset/.
+  - Severity analysis avoids OpenCV on purpose (comment in the code), so
+    the app does not need opencv-python.
+  - The model is stored with Git LFS. Cloning without Git LFS gives a small
+    text pointer file instead of the model and the app will fail to load it.
+
+
+-------------------------------------------------------------------------
+12. OPEN QUESTIONS
+-------------------------------------------------------------------------
+
+  - Which training run produced the saved model? training_hist.json and
+    model_metrics.json (val acc 96.96%) agree with each other, but the
+    notebook's saved outputs show a different run (final val acc 95.76%).
+    The notebook was most likely re-run without saving its outputs.
+  - Exact Streamlit version used (unpinned in requirement.txt).
+  - What home_page.jpg was intended for; no current code loads it.
+  - Whether librosa was planned for a feature or is a leftover.
+  - Exact CUDA/cuDNN versions on the training machine (the notebook only
+    shows the driver, which reports CUDA 13.1 support).
+  - Whether the severity thresholds (15/35/60%) and pathogen scoring
+    thresholds come from a reference or were chosen by hand.
