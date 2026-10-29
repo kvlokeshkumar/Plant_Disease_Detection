@@ -60,7 +60,8 @@ Libraries (from Plant_Disease_Dataset/requirement.txt)
   matplotlib     3.7.2    plots in notebooks
   seaborn        0.13.0   confusion matrix heatmap / bar plots in notebook
   pandas         2.1.0    tables for Plotly charts in the app
-  streamlit      (unpinned) web app
+  streamlit      (unpinned) web app; version 1.22.0 is installed in the
+                          original "tf" environment and is known to work
   librosa        0.10.1   listed but NOT used anywhere in the code
   plotly         5.18.0   charts in the app
   Pillow         >=9.0.0  image loading in the app
@@ -301,8 +302,7 @@ Where the data lives now
     Dense(1500, relu)
     Dropout(0.4)
     Dense(38, softmax)
-  Trainable parameters: about 7.84 million (calculated from the layer
-  sizes). The 94 MB file size is larger because the optimizer state is
+  Parameters: 7,842,762 (confirmed by loading the saved model). The 94 MB file size is larger because the optimizer state is
   saved too.
 
   Training settings
@@ -451,7 +451,8 @@ Prerequisites
 3. Run the app (no dataset needed, only the model file)
      cd Plant_Disease_Dataset
      streamlit run main.py
-   Open http://localhost:8501, choose "Disease Recognition" in the sidebar,
+   If needed, pin the known-good version: pip install streamlit==1.22.0
+  Open http://localhost:8501, choose "Disease Recognition" in the sidebar,
    upload an image from test/test/ and press "Predict Disease".
 
 4. Get the dataset (only for retraining or regenerating metrics)
@@ -513,7 +514,7 @@ Possible deployment route (not done)
 Bugs / rough edges
   - requirement.txt leaves streamlit unpinned. main.py uses
     st.image(..., use_column_width=True), which is deprecated in newer
-    Streamlit releases. Pin a version that matches when installing.
+    Streamlit releases. Version 1.22.0 is known to work.
   - requirement.txt lists librosa (unused) and omits opencv-python (used
     in the test notebook and Untitled-1.py).
   - numpy 1.24.3 is newer than what TensorFlow 2.10 officially lists; it
@@ -581,7 +582,9 @@ Future ideas (from placeholders in the code)
     model_metrics.json (val acc 96.96%) agree with each other, but the
     notebook's saved outputs show a different run (final val acc 95.76%).
     The notebook was most likely re-run without saving its outputs.
-  - Exact Streamlit version used (unpinned in requirement.txt).
+  - requirement.txt does not pin Streamlit. The original environment has
+    1.22.0; whether that exact version was used during development is not
+    recorded.
   - What home_page.jpg was intended for; no current code loads it.
   - Whether librosa was planned for a feature or is a leftover.
   - Exact CUDA/cuDNN versions on the training machine (the notebook only
